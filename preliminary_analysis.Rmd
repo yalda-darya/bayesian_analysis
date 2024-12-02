@@ -1,0 +1,223 @@
+---
+title: "Final Project Preliminary Analysis"
+author: "Yalda Daryani"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Analysis of Predictors of Abortion Stances Using Bayesian Multinomial Logistic Regression
+
+### Research Questions
+
+Can moral framing and sentiment predict abortion stance? Is there an interaction between moral framing and sentiment? 
+
+### Variables
+
+The dataset contains the following variables:
+
+1. **Stance (Dependent Variable)**:  
+   This categorical variable represents the abortion stance of tweets. It has five levels:
+   - Only Prolife  
+   - Prolife talking about Prochoice  
+   - Prochoice talking about Prolife  
+   - Only Prochoice  
+   - Neither  
+
+2. **Sentiment (Predictor)**:  
+   A categorical variable (`sentiment_label`) with three levels:
+   - Positive  
+   - Negative  
+   - Neutral  
+
+3. **Moral Framing (Predictors)**:  
+   Binary variables indicating the presence or absence of moral framing in the tweet:  
+   - Care  
+   - Fairness  
+   - Authority  
+   - Loyalty  
+   - Purity  
+
+4. **Interaction Terms**:  
+   Interaction terms will be included between `sentiment_label` and each of the moral framing variables to test if sentiment moderates the effect of moral framing on abortion stances.
+
+---
+
+### Statistical Model
+
+We use a **Bayesian multinomial logistic regression model** to predict abortion stances (`label`) using sentiment, moral framing, and their interaction as predictors.
+
+#### Mathematical Formulation
+
+The probability of a tweet being in stance \(k\) is modeled as:
+
+\[
+P(Y = k) = \frac{\exp(\beta_{0k} + \beta_{1k} \cdot \text{Sentiment} + \beta_{2k} \cdot \text{Moral Framing} + \beta_{3k} \cdot (\text{Sentiment} \times \text{Moral Framing}))}{\sum_{j} \exp(\beta_{0j} + \beta_{1j} \cdot \text{Sentiment} + \beta_{2j} \cdot \text{Moral Framing} + \beta_{3j} \cdot (\text{Sentiment} \times \text{Moral Framing}))}
+\]
+
+Where:  
+- \(Y\) is the abortion stance (`label`), with categories \(k = 1, \dots, 5\).  
+- \(\beta_{0k}\): Intercept for category \(k\).  
+- \(\beta_{1k}\): Coefficient for the effect of `Sentiment` on \(k\).  
+- \(\beta_{2k}\): Coefficient for the effect of `Moral Framing` on \(k\).  
+- \(\beta_{3k}\): Coefficient for the interaction effect of `Sentiment` and `Moral Framing` on \(k\).
+
+---
+
+### Rationale for Using Bayesian Multinomial Logistic Regression
+
+1. **Multinomial Outcome**:  
+   The dependent variable (`label`) has multiple categories, requiring a multinomial logistic regression model.
+
+2. **Bayesian Framework**:  
+   A Bayesian approach allows for:
+   - The incorporation of prior knowledge about the effects of sentiment and moral framing.  
+   - Rich uncertainty quantification through posterior distributions.  
+   - Flexible interpretation of model parameters as probabilities.
+
+3. **Interaction Effects**:  
+   The model tests whether sentiment moderates the relationship between moral framing and abortion stance by including interaction terms.
+
+4. **Practical Benefits**:  
+   Bayesian methods handle small sample sizes and complex models more robustly than traditional frequentist approaches.
+   
+### Loading Packages 
+```{r, include=FALSE}
+# Load libraries
+library(brms)       
+library(tidyverse)  
+library(cmdstanr)   
+library(bayesplot)
+library(posterior)
+```
+### Preparing the Dataset
+```{r, include=FALSE}
+# Load dataset
+data <- read.csv("/Users/daryani/Desktop/data/Abortion/sample_10K.csv")
+
+# Convert necessary columns to factors
+data$label <- as.factor(data$Label)
+data$sentiment_label <- as.factor(data$sentiment_label)
+
+# Check the structure of the dataset
+str(data)
+
+# Summary of data
+summary(data)
+```
+### Fit the Model 
+```{r}
+formula <- bf(
+  label ~ sentiment_label * (care + fairness + authority + loyalty + purity)
+)
+
+# Fit the Bayesian multinomial logistic regression model
+fit <- brm(
+  formula = formula,
+  family = categorical(link = "logit"),
+  data = data,
+  backend = "cmdstanr",  
+  iter = 4000,           
+  warmup = 1000,         
+  chains = 4,            
+  cores = 4,            
+  seed = 123            
+)
+```
+### Model Summary 
+```{r}
+summary(fit)
+```
+### # Check R-hat values for convergence
+```{r}
+# Extract R-hat values
+rhat_values <- rhat(fit)
+
+# View R-hat values
+print(rhat_values)
+
+# Check problematic parameters with R-hat > 1.01
+high_rhat <- rhat_values[rhat_values > 1.01]
+print(high_rhat)
+```
+### Posterior predictive checks
+```{r}
+pp_check(fit)
+```
+### Posterior Distributions for the Predictor 
+```{r}
+library(bayesplot)
+
+# Function to shorten parameter names for better readability
+shorten_names <- function(name) {
+  name <- gsub("^b_", "", name)  
+  name <- gsub("_", " ", name)  
+  return(name)
+}
+
+# Extract posterior draws
+posterior_draws <- as.data.frame(fit)
+
+# Select all parameters starting with "b_"
+selected_params <- grep("^b_", colnames(posterior_draws), value = TRUE)
+
+# Function to plot a subset of parameters
+plot_subset <- function(subset_keyword) {
+  # Filter parameters based on the subset keyword
+  subset_params <- grep(subset_keyword, selected_params, value = TRUE)
+  shortened_names <- sapply(subset_params, shorten_names)  
+  
+  # Plot for the subset
+  subset_plot <- mcmc_areas(
+    as.matrix(fit, pars = subset_params),
+    prob = 0.8,      # Display 80% credible interval
+    prob_outer = 0.95 # Display 95% credible interval
+  ) +
+    ggplot2::scale_y_discrete(labels = shortened_names) + 
+    ggplot2::theme_bw(base_size = 14) +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(size = 8), 
+      axis.text.x = ggplot2::element_text(size = 10),
+      strip.text = ggplot2::element_text(size = 10)
+    ) +
+    ggplot2::labs(
+      title = paste("Posterior Estimates for", subset_keyword, "Parameters"),
+      x = "Posterior Estimate",
+      y = "Parameters"
+    )
+  
+  return(subset_plot)
+}
+
+# Plot subsets based on different keywords
+plot_care <- plot_subset("care")
+plot_fairness <- plot_subset("fairness")
+plot_authority <- plot_subset("authority")
+plot_loyalty <- plot_subset("loyalty")
+plot_purity <- plot_subset("purity")
+
+# Print the plots
+print(plot_care)
+print(plot_fairness)
+print(plot_authority)
+print(plot_loyalty)
+print(plot_purity)
+```
+#### Cross Validation
+```{r}
+loo_fit <- loo(fit)
+print(loo_fit)
+```
+### Effect for main predictors 
+```{r}
+plot(conditional_effects(fit, categorical = TRUE))
+```
+### Plot for Significant Interactions
+```{r}
+conditions <- data.frame(sentiment_label = unique(data$sentiment_label))
+effects <- conditional_effects(fit, categorical = TRUE, effects = "care", conditions = conditions)
+plot(effects)
+```
